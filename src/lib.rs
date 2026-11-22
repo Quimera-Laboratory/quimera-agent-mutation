@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod ast_sparse_attention;
 pub mod complex_system;
+pub mod experiment;
 pub mod exporter;
 pub mod kine_subspace_operators;
 pub mod llm_router;

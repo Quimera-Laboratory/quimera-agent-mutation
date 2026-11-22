@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use quimera_agent_mutation::adapters::mcp::McpSandboxAdapter;
 use quimera_agent_mutation::complex_system::{analyze_rea_graph, feedback_step_indices};
+use quimera_agent_mutation::experiment::{render_experiment_markdown, run_experiment_suite};
 use quimera_agent_mutation::exporter::{build_rl_feedback, render_markdown_summary, FullCampaignReport};
 use quimera_agent_mutation::llm_router::BudgetGuard;
 use quimera_agent_mutation::oracle::evaluate_outcomes;
@@ -51,6 +52,17 @@ enum Commands {
         trace: PathBuf,
         #[arg(long)]
         mutant_hash: String,
+    },
+    /// Executa o protocolo experimental comparativo (B0, B1, T1, T2 em A0 vs A1)
+    Experiment {
+        #[arg(long, default_value_t = 5)]
+        reps: usize,
+        #[arg(long, default_value_t = 42)]
+        seed: u64,
+        #[arg(long, default_value_t = 64)]
+        max_mutants: usize,
+        #[arg(long, default_value = "markdown")]
+        format: String,
     },
 }
 
@@ -120,6 +132,19 @@ fn main() {
             } else {
                 eprintln!("Mutant hash {} not found", mutant_hash);
                 process::exit(1);
+            }
+        }
+        Commands::Experiment {
+            reps,
+            seed,
+            max_mutants,
+            format,
+        } => {
+            let report = run_experiment_suite(reps, seed, max_mutants);
+            if format == "json" {
+                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+            } else {
+                println!("{}", render_experiment_markdown(&report));
             }
         }
     }
