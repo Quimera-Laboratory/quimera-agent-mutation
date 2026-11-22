@@ -1,0 +1,10 @@
+pub mod adapters;
+pub mod ast_sparse_attention;
+pub mod complex_system;
+pub mod exporter;
+pub mod kine_subspace_operators;
+pub mod llm_router;
+pub mod oracle;
+pub mod quimera_agent_mutator;
+pub mod rea;
+pub mod sandbox_replay;
