@@ -57,3 +57,26 @@ pub fn render_markdown_summary(report: &FullCampaignReport) -> String {
         report.metrics.irs * 100.0,
     )
 }
+
+pub fn render_html_report(report: &FullCampaignReport) -> String {
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+        <title>Quimera Agent Mutation Report</title>\
+        <style>body{{background:#050505;color:#fff;font-family:monospace;padding:24px}}\
+        h1{{color:#CCFF00}} .card{{border:1px solid #222;padding:16px;margin:12px 0;background:#0a0a0a}}</style>\
+        </head><body><h1>QUIMERA AGENT MUTATION // REPORT</h1>\
+        <div class=\"card\">System Complexity: {:.3} | Feedback Loops: {}</div>\
+        <div class=\"card\">Mutants: {} | Killed: {} | Survived: {} | Timeout: {} | Equivalent: {}</div>\
+        <div class=\"card\"><strong>AMS: {:.2}%</strong> | <strong>IRS: {:.2}%</strong></div>\
+        </body></html>",
+        report.system_complexity.system_complexity_score,
+        report.system_complexity.feedback_loops.len(),
+        report.metrics.total_mutants,
+        report.metrics.killed,
+        report.metrics.survived,
+        report.metrics.timeout,
+        report.metrics.equivalent,
+        report.metrics.ams * 100.0,
+        report.metrics.irs * 100.0,
+    )
+}

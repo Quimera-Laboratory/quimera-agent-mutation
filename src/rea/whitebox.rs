@@ -35,27 +35,63 @@ pub fn extract_from_source(path: &Path) -> std::io::Result<ReaGraph> {
 }
 
 pub fn scan_text_into_graph(content: &str, graph: &mut ReaGraph) {
-    // Detecta ferramentas declaradas em JSON/MCP/LangGraph/CrewAI
+    let mut expect_python_tool_fn = false;
+
     for line in content.lines() {
         let trimmed = line.trim();
+
+        // 1. JSON / MCP / OpenAI SDK tool declarations
         if let Some(name) = extract_quoted_after(trimmed, "\"tool_name\":")
             .or_else(|| extract_quoted_after(trimmed, "\"name\":"))
+            .or_else(|| extract_quoted_after(trimmed, "server.tool("))
         {
-            let tid = format!("tool:{}", name);
+            register_tool(graph, name, ConfidenceLevel::High);
+        }
+
+        // 2. Python decorators (@tool) / CrewAI / LangGraph / ADK
+        if trimmed.starts_with("@tool") || trimmed.contains("StructuredTool") {
+            expect_python_tool_fn = true;
+        } else if expect_python_tool_fn && trimmed.starts_with("def ") {
+            if let Some(fn_name) = trimmed
+                .strip_prefix("def ")
+                .and_then(|s| s.split('(').next())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                register_tool(graph, fn_name, ConfidenceLevel::High);
+            }
+            expect_python_tool_fn = false;
+        }
+
+        // 3. Multi-agent / LangGraph / CrewAI edges & subagents
+        if trimmed.contains("Agent(") || trimmed.contains("StateGraph(") {
             graph.add_node_unique(ReaNode {
-                id: tid.clone(),
-                kind: ReaNodeKind::Tool,
-                label: name.to_string(),
-                confidence: ConfidenceLevel::High,
+                id: "agent:subagent".to_string(),
+                kind: ReaNodeKind::Agent,
+                label: "SubAgent/Graph".to_string(),
+                confidence: ConfidenceLevel::Medium,
             });
             graph.add_edge_unique(ReaEdge {
                 from: "agent:root".to_string(),
-                to: tid,
-                kind: ReaEdgeKind::Calls,
+                to: "agent:subagent".to_string(),
+                kind: ReaEdgeKind::Delegates,
+            });
+        }
+        if trimmed.contains(".add_conditional_edges(") || trimmed.contains(".add_edge(") {
+            graph.add_edge_unique(ReaEdge {
+                from: "agent:subagent".to_string(),
+                to: "agent:root".to_string(),
+                kind: ReaEdgeKind::Delegates,
             });
         }
 
-        if trimmed.contains("require_confirmation") || trimmed.contains("NEVER") || trimmed.contains("must not") {
+        // 4. Policy guardrails & system prompt invariants
+        if trimmed.contains("require_confirmation")
+            || trimmed.contains("NEVER")
+            || trimmed.contains("must not")
+            || trimmed.contains("DO NOT")
+            || trimmed.contains("forbidden")
+        {
             let rule_id = format!("rule:{}", graph.inferred_rules.len() + 1);
             graph.add_node_unique(ReaNode {
                 id: rule_id.clone(),
@@ -76,7 +112,12 @@ pub fn scan_text_into_graph(content: &str, graph: &mut ReaGraph) {
             });
         }
 
-        if trimmed.contains("rag") || trimmed.contains("memory") || trimmed.contains("vector_store") {
+        // 5. Memory / RAG stores
+        if trimmed.contains("rag")
+            || trimmed.contains("memory")
+            || trimmed.contains("vector_store")
+            || trimmed.contains("retriever")
+        {
             graph.add_node_unique(ReaNode {
                 id: "memory:rag".to_string(),
                 kind: ReaNodeKind::Memory,
@@ -89,6 +130,51 @@ pub fn scan_text_into_graph(content: &str, graph: &mut ReaGraph) {
                 kind: ReaEdgeKind::Reads,
             });
         }
+    }
+}
+
+fn register_tool(graph: &mut ReaGraph, name: &str, confidence: ConfidenceLevel) {
+    let tid = format!("tool:{}", name);
+    graph.add_node_unique(ReaNode {
+        id: tid.clone(),
+        kind: ReaNodeKind::Tool,
+        label: name.to_string(),
+        confidence,
+    });
+    graph.add_edge_unique(ReaEdge {
+        from: "agent:root".to_string(),
+        to: tid,
+        kind: ReaEdgeKind::Calls,
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_langgraph_python_mcp_and_guardrails() {
+        let sample = r#"
+@tool
+def query_ledger(limit: int):
+    pass
+graph = StateGraph(AgentState)
+graph.add_conditional_edges("a", route)
+# NEVER execute transfer without require_confirmation
+retriever = vector_store.as_retriever()
+"#;
+        let mut g = ReaGraph::default();
+        g.add_node_unique(ReaNode {
+            id: "agent:root".into(),
+            kind: ReaNodeKind::Agent,
+            label: "Root".into(),
+            confidence: ConfidenceLevel::High,
+        });
+        scan_text_into_graph(sample, &mut g);
+        assert!(g.nodes.iter().any(|n| n.id == "tool:query_ledger"));
+        assert!(g.nodes.iter().any(|n| n.id == "memory:rag"));
+        assert!(g.nodes.iter().any(|n| n.id == "agent:subagent"));
+        assert!(!g.inferred_rules.is_empty());
     }
 }
 

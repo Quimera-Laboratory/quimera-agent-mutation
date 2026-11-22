@@ -2,12 +2,15 @@ use clap::{Parser, Subcommand};
 use quimera_agent_mutation::adapters::mcp::McpSandboxAdapter;
 use quimera_agent_mutation::complex_system::{analyze_rea_graph, feedback_step_indices};
 use quimera_agent_mutation::experiment::{render_experiment_markdown, run_experiment_suite};
-use quimera_agent_mutation::exporter::{build_rl_feedback, render_markdown_summary, FullCampaignReport};
+use quimera_agent_mutation::exporter::{
+    build_rl_feedback, render_html_report, render_markdown_summary, FullCampaignReport,
+};
 use quimera_agent_mutation::llm_router::BudgetGuard;
 use quimera_agent_mutation::oracle::evaluate_outcomes;
 use quimera_agent_mutation::quimera_agent_mutator::QuimeraAgentMutator;
 use quimera_agent_mutation::rea::{graybox, whitebox};
 use quimera_agent_mutation::sandbox_replay::SandboxReplayRunner;
+use std::fs;
 use std::path::PathBuf;
 use std::process;
 
@@ -45,6 +48,12 @@ enum Commands {
         min_ams: f32,
         #[arg(long, default_value_t = true)]
         strict_guardrails: bool,
+        #[arg(long, default_value = "markdown")]
+        format: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long)]
+        rl_out: Option<PathBuf>,
     },
     /// Reexecuta um único mutante pelo seu hash determinístico
     Replay {
@@ -92,6 +101,9 @@ fn main() {
             max_mutants,
             min_ams,
             strict_guardrails,
+            format,
+            out,
+            rl_out,
         } => {
             let (g, steps, dag_edges) = graybox::extract_from_jsonl(&trace).expect("Failed trace");
             let cas = analyze_rea_graph(&g);
@@ -112,7 +124,23 @@ fn main() {
                 metrics,
                 rl_feedback,
             };
-            println!("{}", render_markdown_summary(&report));
+
+            if let Some(rl_path) = rl_out {
+                let rl_json = serde_json::to_string_pretty(&report.rl_feedback).unwrap();
+                fs::write(&rl_path, rl_json).expect("Failed to write rl_feedback");
+            }
+
+            let rendered = match format.as_str() {
+                "json" => serde_json::to_string_pretty(&report).unwrap(),
+                "html" => render_html_report(&report),
+                _ => render_markdown_summary(&report),
+            };
+            if let Some(out_path) = out {
+                fs::write(&out_path, &rendered).expect("Failed to write report");
+            } else {
+                println!("{}", rendered);
+            }
+
             if report.metrics.ams < min_ams {
                 eprintln!(
                     "CI Gate failed: AMS {:.2}% < min_ams {:.2}%",
